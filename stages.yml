@@ -1,0 +1,43 @@
+trigger:
+  - master
+
+pool:
+  vmImage: 'Ubuntu-20.04'
+
+stages:
+- stage: Build
+  jobs:
+  - job: PublishArmTemplate
+    displayName: Publish ARM template
+    steps:
+    - publish: $(System.DefaultWorkingDirectory)/deploy
+      artifact: Template
+
+- stage: Release
+  jobs:
+  - deployment: DeployArmTemplate
+    displayName: Deploy ARM template
+    environment: dev
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureResourceGroupDeployment@3
+            inputs:
+              ConnectedServiceName: 'Automatic Service Principal'
+              action: 'Create Or Update Resource Group'
+              resourceGroupName: 'variables-logging-dev-rg'
+              location: 'australiaeast'
+              templateLocation: 'Linked artifact'
+              csmFile: '$(Pipeline.Workspace)/Template/variables-logging.json'
+              deploymentMode: 'Incremental'
+              deploymentOutputs: 'ArmOutput'
+          - task: PowerShell@2
+            env:
+              ArmOutput: $(ArmOutput)
+            inputs:
+              targetType: 'inline'
+              script: |
+                $armOutput = $ENV:ArmOutput | ConvertFrom-Json
+                $secretOutput = $armOutput.mySecretOutput.value
+                Write-Host "##vso[task.setvariable variable=SecretOutput;]$secretOutput"
