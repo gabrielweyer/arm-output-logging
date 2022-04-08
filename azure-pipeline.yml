@@ -1,0 +1,54 @@
+trigger:
+  - main
+
+pool:
+  vmImage: ubuntu-20.04
+
+stages:
+- stage: Build
+  jobs:
+  - job: PublishArmTemplate
+    displayName: Publish ARM template
+    steps:
+    - publish: $(System.DefaultWorkingDirectory)/deploy
+      displayName: Publish artifact
+      artifact: template
+
+- stage: Release
+  jobs:
+  - deployment: DeployArmTemplate
+    displayName: Deploy ARM template
+    environment: dev
+    variables:
+      resourceGroupName: armoutputlogging-rg
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureResourceGroupDeployment@3
+            displayName: Deploy ARM template
+            inputs:
+              ConnectedServiceName: 'Automatic Service Principal'
+              action: 'Create Or Update Resource Group'
+              resourceGroupName: $(resourceGroupName)
+              location: australiaeast
+              templateLocation: 'Linked artifact'
+              csmFile: '$(Pipeline.Workspace)/template/template.json'
+              deploymentMode: 'Incremental'
+              deploymentOutputs: 'ArmOutput'
+          - task: AzurePowerShell@5
+            displayName: Display ARM output
+            env:
+              ArmOutput: $(ArmOutput)
+            inputs:
+              azureSubscription: 'Automatic Service Principal'
+              scriptType: inline
+              inline: |
+                $armOutput = $Env:ArmOutput | ConvertFrom-Json
+                $deploymentName = $armOutput.deploymentName.value
+                Write-Host 'Outputs from deployment task'
+                $armOutput | ConvertTo-Json
+                Write-Host 'Outputs from Resource Manager (Get-AzResourceGroupDeployment)'
+                $outputs = (Get-AzResourceGroupDeployment -ResourceGroupName $(resourceGroupName) -Name $deploymentName).Outputs
+                $outputs | Format-Table -Property Key, @{Label='Type'; Expression={$_.Value.Type}}, @{Label='Value'; Expression={$_.Value.Value}}
+              azurePowerShellVersion: latestVersion
